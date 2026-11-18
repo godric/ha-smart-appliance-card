@@ -2984,6 +2984,23 @@ var HC_PLATFORM_ROLES = {
     boost: { domain: 'switch', keys: ['switch_super_refrigerator', 'switch_super_freezer'] },
     light: { domain: 'light', keys: ['light_cooking_lighting', 'light_internal'], test: () => true },
   },
+  // LocalThings (mbillow/localthings): Samsung appliances over the local network. Its machine state is already
+  // idle / active / pause; the step is the oven's cavity state or the laundry progress. A washer or dryer cycle select
+  // is keyed by its course table (washer_cycle_table_02…).
+  localthings: {
+    operation_state: { domain: 'sensor', keys: ['machine_state'] },
+    phase: { domain: 'sensor', keys: ['oven_state', 'progress'] },
+    progress: { domain: 'sensor', keys: ['progress_percentage'] },
+    finish_time: { domain: 'sensor', keys: ['finish_time'], test: hcIsTimestamp },
+    remaining: { domain: 'sensor', keys: ['completion_minutes'] },
+    selected_program: { domain: 'select', keys: ['cycle', 'oven_mode'], tk: /^(washer|dryer)_cycle_table_/ },
+    start: { domain: 'button', keys: ['start', 'start_cooking'] },
+    pause: { domain: 'button', keys: ['pause'] },
+    stop: { domain: 'button', keys: ['stop'] },
+    power: { domain: 'switch', keys: ['power_switch'] },
+    remote_start: { domain: 'binary_sensor', keys: ['remote_control'] },
+    door: { domain: 'binary_sensor', keys: ['door_open', 'door'], test: hcIsDoor },
+  },
 };
 var HC_PLATFORMS = Object.keys(HC_PLATFORM_ROLES);
 // Switches of Home Connect Local that are appliance settings, not program options.
@@ -3040,6 +3057,12 @@ function hcNormState(platform, raw, phase) {
     if (raw === 'run' || raw === 'running') return phase === 'delay_wash' || phase === 'scheduled_start' ? 'delayedstart' : 'run';
     if (raw === 'pause' || raw === 'paused') return 'pause';
     return phase === 'finish' || phase === 'finished' ? 'finished' : 'ready';
+  }
+  if (platform === 'localthings') {
+    // The cavity state and the laundry progress hold `finish` a few minutes after the machine goes back to idle.
+    if (raw === 'active') return phase === 'delaywash' ? 'delayedstart' : 'run';
+    if (raw === 'pause') return 'pause';
+    return phase === 'finish' ? 'finished' : 'ready';
   }
   var map = HC_STATE_MAPS[platform];
   if (!map) return raw;
@@ -3098,7 +3121,8 @@ function hcDeviceRoles(hass, deviceId) {
   // Home Connect lists every switch and select as a program option; elsewhere diagnostics are left out (and, for
   // Home Connect Local, the appliance settings too).
   var opts = platform === 'home_connect' ? list : list.filter((e) => e.entity_category !== 'diagnostic' &&
-    (platform !== 'homeconnect_ws' || (e.entity_category !== 'config' && HC_NOT_OPTIONS.indexOf(e.translation_key) < 0)));
+    (platform !== 'homeconnect_ws' || (e.entity_category !== 'config' && HC_NOT_OPTIONS.indexOf(e.translation_key) < 0)) &&
+    (platform !== 'localthings' || e.entity_category !== 'config'));
   var ids = opts.map((e) => e.entity_id);
   cached = {
     count: list.length,
@@ -3116,6 +3140,7 @@ function hcDeviceRoles(hass, deviceId) {
 function hcFindRole(hass, list, m) {
   var inDomain = list.filter((e) => e.entity_id.split('.')[0] === m.domain);
   var hit = inDomain.find((e) => m.keys.indexOf(e.translation_key) >= 0);
+  if (!hit && m.tk) hit = inDomain.find((e) => m.tk.test(e.translation_key || ''));
   if (!hit && m.id) hit = inDomain.find((e) => m.id.test(e.entity_id));
   if (!hit && m.test) hit = inDomain.find((e) => m.test(hass.states[e.entity_id]));
   return hit ? hit.entity_id : undefined;
@@ -3178,6 +3203,11 @@ var HC_WS_TYPES = {
   CoffeeMaker: 'coffee_maker', Hood: 'hood', Hob: 'hob', Cooktop: 'hob', Refrigerator: 'fridge', FridgeFreezer: 'fridge',
   Freezer: 'freezer', WineCooler: 'wine_cooler',
 };
+// LocalThings names the device after its type: "Samsung Oven (NV7B4445VAK)".
+var HC_LOCALTHINGS_TYPES = {
+  Washer: 'washer', Dryer: 'dryer', Dishwasher: 'dishwasher', Oven: 'oven', Range: 'oven', Microwave: 'microwave',
+  Cooktop: 'hob', 'Range Hood': 'hood', Refrigerator: 'fridge', 'Air Dresser': 'styler',
+};
 // [kind, translation keys any one of which gives it away], in order.
 var HC_KEY_KINDS = [
   ['washer_dryer', (k) => k.washer_machine_state && k.dryer_machine_state],
@@ -3225,6 +3255,10 @@ function hcDetectKind(hass, deviceId, list) {
   }
   // Home Connect Local names the device model after the appliance type (Dishwasher, WasherDryer…).
   if (platform === 'homeconnect_ws' && HC_WS_TYPES[dev.model]) return HC_WS_TYPES[dev.model];
+  if (platform === 'localthings') {
+    var lt = String(dev.name || '').match(/^Samsung (.+?)(?: \(.*\))?$/);
+    if (lt && HC_LOCALTHINGS_TYPES[lt[1]]) return HC_LOCALTHINGS_TYPES[lt[1]];
+  }
   // Home Connect programs.
   var progs = list.filter((e) => e.entity_id.indexOf('select.') === 0)
     .map((e) => ((hass.states[e.entity_id]?.attributes.options) || []).join(' ')).join(' ');
@@ -4179,8 +4213,8 @@ class HomeConnectBaseCard extends HTMLElement {
       return ent.active_program && this._avail(ent.selected_program)
         ? { domain: 'select', service: 'select_option', data: { entity_id: ent.active_program, option: this._val(ent.selected_program) } } : null;
     }
-    // Miele resumes with its Start button.
-    var btnId = ent[action] || (action === 'resume' && r.platform === 'miele' ? ent.start : undefined);
+    // Miele and LocalThings resume with their Start button.
+    var btnId = ent[action] || (action === 'resume' && (r.platform === 'miele' || r.platform === 'localthings') ? ent.start : undefined);
     // A button entity stays `unknown` until first pressed: only `unavailable` (or no state at all) rules it out.
     var v = this._val(btnId);
     if (btnId && v !== undefined && v !== 'unavailable') return { domain: 'button', service: 'press', data: { entity_id: btnId } };
@@ -4242,6 +4276,8 @@ class HomeConnectBaseCard extends HTMLElement {
     var progress = num(ent.progress);
     var finish = this._avail(ent.finish_time) ? new Date(this._val(ent.finish_time)) : null;
     if (finish && Number.isNaN(finish.getTime())) finish = null;
+    // A LocalThings oven cooking without a timer still reports a percentage (stuck at 0 or 1): no finish, no progress.
+    if (r.platform === 'localthings' && !finish && hcMinutes(this._st(ent.remaining)) == null) progress = null;
     // Times left and elapsed in minutes, converted from the unit the sensor is shown in.
     var mins = (id) => (this._avail(id) ? hcMinutes(this._st(id)) : null);
     var left = mins(ent.remaining), elapsed = mins(ent.elapsed), total = num(ent.total);

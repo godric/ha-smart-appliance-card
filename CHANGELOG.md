@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.9.0 - 2026-11-18
+
+### Features
+- Support for [LocalThings](https://github.com/mbillow/localthings), Samsung appliances on the local network: machine state with the oven's cavity state or the laundry step, progress and finish time, cycle or oven mode picker, Start / Pause / Resume / Stop buttons, remote control, power and door; the type is read from the device name. An oven cooking without a timer shows no percentage.
+
 ## 2.8.2 - 2026-11-18
 
 ### Fixes

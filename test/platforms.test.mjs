@@ -174,6 +174,74 @@ test("SmartThings: machine and job states, start, pause and stop on the operatin
   assert.equal(hcNormState("smartthings", "run", "delay_wash"), "delayedstart");
 });
 
+const localOven = (machine = "active", cavity = "cooking", finish = "unknown") =>
+  device("localthings", { manufacturer: "Samsung", model: "NV7B4445VAK", name: "Samsung Oven (NV7B4445VAK)" }, [
+    ["sensor.samsung_oven_machine_state", machine, { device_class: "enum", options: ["idle", "active", "pause"] }, { translation_key: "machine_state" }],
+    ["sensor.samsung_oven_cavity_state", cavity, { device_class: "enum", options: ["ready", "preheat", "cooking", "finish"] }, { translation_key: "oven_state" }],
+    ["sensor.samsung_oven_progress", "1", { unit_of_measurement: "%" }, { translation_key: "progress_percentage" }],
+    ["sensor.samsung_oven_finish_time", finish, { device_class: "timestamp" }, { translation_key: "finish_time" }],
+    ["sensor.samsung_oven_temperature", "180", { device_class: "temperature", unit_of_measurement: "°C" }, { translation_key: "current_temp_c" }],
+    ["number.samsung_oven_setpoint", "200", { device_class: "temperature", unit_of_measurement: "°C" }, { translation_key: "oven_setpoint" }],
+    ["select.samsung_oven_mode", "Convection", { options: ["NoOperation", "Bake", "Convection"] }, { translation_key: "oven_mode" }],
+    ["binary_sensor.samsung_oven_door", "off", { device_class: "door" }, { translation_key: "door_open" }],
+    ["binary_sensor.samsung_oven_remote_control", "on", { device_class: "connectivity" }, { translation_key: "remote_control" }],
+    ["button.samsung_oven_stop", "unknown", {}, { translation_key: "stop" }],
+    ["switch.samsung_oven_lamp", "off", {}, { translation_key: "lamp" }],
+    ["switch.samsung_oven_sound", "on", {}, { translation_key: "sound", entity_category: "config" }],
+  ]);
+
+test("LocalThings oven: type from the device name, cavity state as status, no percentage without a timer, Stop pressed", async () => {
+  const hass = localOven();
+  assert.equal(hcKindOf(hass, "a1"), "oven");
+  const { card, html } = render(hass);
+  assert.match(html, /class="picture st-run running"/);
+  assert.match(html, /Cooking/);
+  assert.doesNotMatch(html, /<small> %/, "the stuck percentage is not shown");
+  assert.match(html, /Door closed/);
+  assert.match(html, /title="Samsung"/);
+  card._send("stop");
+  await new Promise((r) => setTimeout(r));
+  assert.deepEqual(plain(hass.calls[0]), ["button", "press", { entity_id: "button.samsung_oven_stop" }]);
+});
+
+test("LocalThings oven: a timed cook shows its progress, finish is held, settings are no options", () => {
+  const timed = localOven("active", "cooking", inMinutes(30));
+  timed.states["sensor.samsung_oven_progress"] = st("50", { unit_of_measurement: "%" });
+  assert.match(render(timed).html, /50<small> %/);
+  const done = localOven("idle", "finish");
+  assert.equal(hcNormState("localthings", "idle", "finish"), "finished");
+  const { html } = render(done);
+  assert.match(html, /st-finished/);
+  const ready = render(localOven("idle", "ready")).html;
+  assert.match(ready, /data-select="select.samsung_oven_mode"/);
+  assert.match(ready, /data-toggle="switch.samsung_oven_lamp"/);
+  assert.doesNotMatch(ready, /switch.samsung_oven_sound/, "config switches are settings, not options");
+});
+
+test("LocalThings washer: cycle select keyed by its table, progress step, pause, resume with Start", async () => {
+  const hass = device("localthings", { manufacturer: "Samsung", model: "WW90T", name: "Samsung Washer (WW90T)" }, [
+    ["sensor.washer_machine_state", "pause", { options: ["idle", "active", "pause"] }, { translation_key: "machine_state" }],
+    ["sensor.washer_progress", "rinse", { device_class: "enum" }, { translation_key: "progress" }],
+    ["sensor.washer_progress_percentage", "40", { unit_of_measurement: "%" }, { translation_key: "progress_percentage" }],
+    ["sensor.washer_finish_time", inMinutes(45), { device_class: "timestamp" }, { translation_key: "finish_time" }],
+    ["sensor.washer_completion_minutes", "45", { unit_of_measurement: "min", device_class: "duration" }, { translation_key: "completion_minutes" }],
+    ["select.washer_cycle", "1C", { options: ["1B", "1C"] }, { translation_key: "washer_cycle_table_02" }],
+    ["button.washer_start", "unknown", {}, { translation_key: "start" }],
+    ["button.washer_pause", "unknown", {}, { translation_key: "pause" }],
+    ["button.washer_stop", "unknown", {}, { translation_key: "stop" }],
+  ]);
+  assert.equal(hcKindOf(hass, "a1"), "washer");
+  const { card, html } = render(hass);
+  assert.match(html, /40<small> %/);
+  assert.match(html, /data-action="resume"/);
+  card._send("resume");
+  await new Promise((r) => setTimeout(r));
+  assert.deepEqual(plain(hass.calls[0]), ["button", "press", { entity_id: "button.washer_start" }]);
+  hass.states["sensor.washer_machine_state"] = st("active", { options: ["idle", "active", "pause"] });
+  assert.match(render(hass).html, /Rinse/);
+  assert.equal(hcNormState("localthings", "active", "delaywash"), "delayedstart");
+});
+
 test("Whirlpool: washer cycle steps run, no controls, brand option for a Maytag", () => {
   const hass = device("whirlpool", { manufacturer: "Whirlpool" }, [
     ["sensor.washer_state", "cycle_spinning", {}, { translation_key: "washer_state" }],
