@@ -218,6 +218,29 @@ test("LocalThings oven: a timed cook shows its progress, finish is held, setting
   assert.doesNotMatch(ready, /switch.samsung_oven_sound/, "config switches are settings, not options");
 });
 
+test("number options: cook time and temperature with − / +, by 5 minutes, within the range, hidden while cooking", async () => {
+  const hass = localOven("idle", "ready");
+  hass.states["number.samsung_oven_cook_time"] = st("32", { unit_of_measurement: "min", min: 0, max: 60, step: 1, friendly_name: "Samsung Oven Cook time" });
+  hass.entities["number.samsung_oven_cook_time"] = { entity_id: "number.samsung_oven_cook_time", device_id: "a1", platform: "localthings", translation_key: "cook_time" };
+  hass.states["number.samsung_oven_setpoint"].attributes = { ...hass.states["number.samsung_oven_setpoint"].attributes, min: 30, max: 200, step: 5 };
+  hass.states["number.samsung_oven_volume"] = st("5", { min: 0, max: 15, step: 5 });
+  hass.entities["number.samsung_oven_volume"] = { entity_id: "number.samsung_oven_volume", device_id: "a1", platform: "localthings", entity_category: "config" };
+  const { card, html } = render(hass);
+  assert.match(html, /data-step="number.samsung_oven_cook_time" data-dir="1"/);
+  assert.match(html, /Cook time/);
+  assert.match(html, /data-step="number.samsung_oven_setpoint" data-dir="1"[^>]* disabled/, "+ is off at the maximum");
+  assert.doesNotMatch(html, /samsung_oven_volume/, "config numbers are settings");
+  await card._optionNumber("number.samsung_oven_cook_time", 1);
+  await card._optionNumber("number.samsung_oven_cook_time", -1);
+  await card._optionNumber("number.samsung_oven_setpoint", 1);
+  assert.deepEqual(plain(hass.calls), [
+    ["number", "set_value", { entity_id: "number.samsung_oven_cook_time", value: 35 }],
+    ["number", "set_value", { entity_id: "number.samsung_oven_cook_time", value: 30 }],
+  ], "off-grid 32 goes to 35 or 30; the setpoint at its maximum sends nothing");
+  hass.states["sensor.samsung_oven_machine_state"] = st("active", { options: ["idle", "active", "pause"] });
+  assert.doesNotMatch(render(hass).html, /data-step=/, "not while cooking");
+});
+
 test("LocalThings washer: cycle select keyed by its table, progress step, pause, resume with Start", async () => {
   const hass = device("localthings", { manufacturer: "Samsung", model: "WW90T", name: "Samsung Washer (WW90T)" }, [
     ["sensor.washer_machine_state", "pause", { options: ["idle", "active", "pause"] }, { translation_key: "machine_state" }],

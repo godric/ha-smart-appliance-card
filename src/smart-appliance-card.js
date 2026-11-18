@@ -3130,6 +3130,9 @@ function hcDeviceRoles(hass, deviceId) {
     roles: roles,
     switches: ids.filter((id) => id.indexOf('switch.') === 0),
     selects: ids.filter((id) => id.indexOf('select.') === 0),
+    // Numbers set before a start (an oven's cook time and temperature); settings and diagnostics stay out.
+    numbers: list.filter((e) => e.entity_id.indexOf('number.') === 0 && e.entity_category !== 'config' &&
+      e.entity_category !== 'diagnostic').map((e) => e.entity_id),
     temps: hcTempIds(hass, list),
     zones: hcZoneIds(hass, list),
   };
@@ -3346,6 +3349,7 @@ var HC_PX = {
   section: 26,
   selectRow: 56,
   toggleRow: 28,
+  numberRow: 36,
   zoneRow: 62, // a row of hob zone tiles
   reload: 30,
   error: 26,
@@ -3937,6 +3941,7 @@ class HomeConnectBaseCard extends HTMLElement {
     // Everything else the integration exposes as a switch or select is a program option.
     ent.option_switches = found.switches.filter((id) => used.indexOf(id) < 0);
     ent.option_selects = found.selects.filter((id) => used.indexOf(id) < 0);
+    ent.option_numbers = (found.numbers || []).filter((id) => used.indexOf(id) < 0);
     ent.temps = found.temps || [];
     ent.zones = found.zones || [];
     return { deviceId: deviceId, ent: ent, platform: found.platform };
@@ -3970,7 +3975,7 @@ class HomeConnectBaseCard extends HTMLElement {
   _update() {
     if (!this._config || !this._hass || !this.shadowRoot) return;
     var r = this._resolve();
-    var ids = HC_ALL_ROLES.map((role) => r.ent[role]).concat(r.ent.option_switches, r.ent.option_selects, r.ent.temps,
+    var ids = HC_ALL_ROLES.map((role) => r.ent[role]).concat(r.ent.option_switches, r.ent.option_selects, r.ent.option_numbers, r.ent.temps,
       ...r.ent.zones.map((z) => z.ids));
     var hass = this._hass;
     var states = JSON.stringify(ids.map((id) => {
@@ -4364,6 +4369,18 @@ class HomeConnectBaseCard extends HTMLElement {
           : '<option selected>—</option>';
         return `<label class="field small"><span>${hcEsc(this._entityLabel(id, deviceName))}</span><select data-select="${hcEsc(id)}"${ok ? '' : ' disabled'}>${o}</select></label>`;
       }).join('');
+      // Numbers with − / + buttons; a tap on the value opens its dialog for an exact one. Not on appliances without
+      // programs, whose setpoints are chips.
+      var numIds = profile.simple ? [] : ent.option_numbers.filter((id) => this._st(id));
+      var numbers = numIds.map((id) => {
+        var s = this._st(id), ok = this._avail(id) && !this._pending.has(id), v = Number(s.state), a = s.attributes;
+        var text = this._avail(id) ? (this._hass.formatEntityState ? this._hass.formatEntityState(s) : `${s.state} ${a.unit_of_measurement || ''}`.trim()) : '—';
+        var label = hcEsc(this._entityLabel(id, deviceName));
+        var stepBtn = (dir, icon, off) => `<button class="nstep" data-step="${hcEsc(id)}" data-dir="${dir}" aria-label="${label} ${dir > 0 ? '+' : '−'}"` +
+          `${ok && !off ? '' : ' disabled'}><ha-icon icon="${icon}"></ha-icon></button>`;
+        return `<div class="num"><span class="nlabel">${label}</span><div class="nctl">${stepBtn(-1, 'mdi:minus', v <= (a.min ?? -Infinity))}` +
+          `<button class="nval" data-entity="${hcEsc(id)}">${hcEsc(text)}</button>${stepBtn(1, 'mdi:plus', v >= (a.max ?? Infinity))}</div></div>`;
+      }).join('');
       var toggles = ent.option_switches.filter((id) => this._st(id)).map((id) => {
         var ok = this._avail(id), on = ok && this._val(id) === 'on';
         return '<button class="toggle' + (on ? ' on' : '') + '" data-toggle="' + hcEsc(id) + '" aria-pressed="' + on + '"' + (ok && !this._pending.has(id) ? '' : ' disabled') + '>' +
@@ -4381,13 +4398,14 @@ class HomeConnectBaseCard extends HTMLElement {
         reload = '<div class="reload"><span>' + this._t(local ? 'options_local' : 'options_not_loaded') + '</span>' +
           (canReload ? `<button class="link" data-action="reload_options"${reloadOff ? ' disabled' : ''}${local ? ` title="${hcEsc(this._t('options_local'))}"` : ''}><ha-icon icon="mdi:refresh"></ha-icon>${this._t('reload_options')}</button>` : '') + '</div>';
       }
-      if (selects || toggles) {
+      if (selects || toggles || numbers) {
         // Drop-downs sit three to a row at the usual card width, the option pills about three to a row too.
         var nSel = ent.option_selects.filter((id) => this._st(id)).length;
         var nTog = ent.option_switches.filter((id) => this._st(id)).length;
-        optPx = HC_PX.section + Math.ceil(nSel / 3) * HC_PX.selectRow + Math.ceil(nTog / 3) * HC_PX.toggleRow + (reload ? HC_PX.reload : 0);
+        optPx = HC_PX.section + Math.ceil(nSel / 3) * HC_PX.selectRow + numIds.length * HC_PX.numberRow + Math.ceil(nTog / 3) * HC_PX.toggleRow +
+          (reload ? HC_PX.reload : 0);
         optionsHtml = '<div class="section"><div class="section-title"><ha-icon icon="mdi:tune-variant"></ha-icon>' + this._t('options') + '</div>' +
-          (selects ? `<div class="grid">${selects}</div>` : '') +
+          (selects ? `<div class="grid">${selects}</div>` : '') + (numbers ? `<div class="nums">${numbers}</div>` : '') +
           (toggles ? `<div class="toggles">${toggles}</div>` : '') + reload + '</div>';
       }
     }
@@ -4841,6 +4859,16 @@ class HomeConnectBaseCard extends HTMLElement {
       '.section-title ha-icon { --mdc-icon-size: 16px; }' +
       '.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 6px; }' +
       '.toggles { display: flex; flex-wrap: wrap; gap: 6px; }' +
+      '.nums { display: flex; flex-direction: column; gap: 6px; }' +
+      '.num { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }' +
+      '.nlabel { font-size: 13px; color: var(--primary-text-color); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }' +
+      '.nctl { display: flex; align-items: center; gap: 4px; flex: none; }' +
+      '.nstep { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; color: var(--primary-text-color);' +
+        ' background: var(--secondary-background-color, rgba(128,128,128,0.12)); }' +
+      '.nstep ha-icon { --mdc-icon-size: 18px; }' +
+      '.nstep:disabled { opacity: 0.45; }' +
+      '.nval { min-width: 64px; font-size: 13px; font-weight: 500; color: var(--primary-text-color); text-align: center; padding: 6px 4px;' +
+        ' border-radius: 10px; background: none; }' +
       '.section-title .aside { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 11px; }' +
       // A hob's zones: tiles two (or more) to a row, a 40 px round icon tinted by the state while the zone heats.
       '.zones { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }' +
@@ -4948,8 +4976,12 @@ class HomeConnectBaseCard extends HTMLElement {
   }
 
   _onClick(ev) {
-    var btn = ev.composedPath().find((n) => n.dataset && (n.dataset.action || n.dataset.toggle || n.dataset.entity));
+    var btn = ev.composedPath().find((n) => n.dataset && (n.dataset.action || n.dataset.toggle || n.dataset.entity || n.dataset.step));
     if (!btn || btn.disabled) return;
+    if (btn.dataset.step) {
+      this._optionNumber(btn.dataset.step, Number(btn.dataset.dir));
+      return;
+    }
     if (btn.dataset.entity) {
       this._moreInfo(btn.dataset.entity);
       return;
@@ -5058,6 +5090,23 @@ class HomeConnectBaseCard extends HTMLElement {
       this._pending.delete(id);
       this._update();
     }
+  }
+
+  // A number one step up or down, within its range. A minute step goes by 5 minutes, a second step by the minute.
+  _optionNumber(id, dir) {
+    var s = this._st(id);
+    if (!s || !this._avail(id)) return;
+    var a = s.attributes, unit = a.unit_of_measurement;
+    var step = Number(a.step) || 1;
+    if (unit === 'min' && step < 5) step = 5;
+    else if (unit === 's' && step < 60) step = 60;
+    var v = Number(s.state) + dir * step;
+    // From an off-grid value, the first step lands on the grid.
+    v = (dir > 0 ? Math.floor : Math.ceil)(v / step) * step;
+    v = Math.min(a.max ?? Infinity, Math.max(a.min ?? -Infinity, v));
+    v = Number(v.toFixed(6));
+    if (v === Number(s.state)) return;
+    return this._guard(id, () => this._option('number', 'set_value', { entity_id: id, value: v }));
   }
 
   // An option pill: turn_on or turn_off from the state shown, never a blind toggle.
