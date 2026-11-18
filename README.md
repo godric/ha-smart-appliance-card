@@ -43,7 +43,7 @@ Pick the appliance: the card works out its type and its brand, and finds all its
 - The appliance's brand next to its title: its logo (Bosch, Siemens, Neff, Gaggenau, Miele, Samsung, LG, Whirlpool, KitchenAid), or a badge with its initial on the header icon for the others (Constructa, Maytag…); main buttons in the brand's colour
 - Status with colour, progress bar, finish time and time left, the program step when the integration reports it (spinning, drying…)
 - Program picker and **Start** (when remote start is enabled), **Pause / Resume**, **Stop** with a confirmation tap, whatever the integration offers
-- Program options before starting, and the settings of appliances without programs (super modes, fan stage…)
+- Program options before starting (an oven's cook time and temperature with − / + buttons), and the settings of appliances without programs (super modes, fan stage…)
 - Temperatures of fridges, freezers and wine cabinets, and of ovens while cooking
 - Door state, salt and rinse aid alerts, coffee machine bean container, water tank and drip tray alerts
 - A reminder chip when a program has finished and the door hasn't been opened since ("Finished 25 minutes ago, door still closed")

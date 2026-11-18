@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.10.0 - 2026-11-18
+
+### Features
+- Number options: the numbers an appliance offers before a start, like an oven's cook time and temperature, get a row with − / + buttons among the options. Minutes go by 5, the entity's range is respected, and a tap on the value opens its dialog for an exact one. Settings and diagnostics stay out; fridges and hobs keep their setpoints as chips.
+
 ## 2.9.0 - 2026-11-18
 
 ### Features
